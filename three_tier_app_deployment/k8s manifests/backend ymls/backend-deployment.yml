@@ -4,7 +4,7 @@ metadata:
   name: backend-deployment
   namespace: chatty-app
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: backend
@@ -18,9 +18,17 @@ spec:
       containers:
       - name: backend-container
         image: pias97/chatty-backend:v1
-        resources:
-          limits:
-            memory: "128Mi"
-            cpu: "500m"
         ports:
         - containerPort: 5001
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: MONGO_URL
+          value: "mongodb://mongoadmin:secret@mongodb:27017/dbname?authSource=admin"
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: mongo-secret
+              key: jwt
+        - name: PORT
+          value: "5001"      
