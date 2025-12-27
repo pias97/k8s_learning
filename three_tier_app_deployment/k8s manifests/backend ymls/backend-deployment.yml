@@ -22,9 +22,10 @@ spec:
         - containerPort: 5001
         env:
         - name: NODE_ENV
-          value: "production"
-        - name: MONGO_URL
-          value: "mongodb://mongoadmin:secret@mongodb:27017/dbname?authSource=admin"
+          value: production
+        - name: MONGODB_URI
+          value: "mongodb://superadmin:secretpassword@mongodb:27017/dbname?authSource=admin"
+
         - name: JWT_SECRET
           valueFrom:
             secretKeyRef:
