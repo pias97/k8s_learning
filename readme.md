@@ -1,4 +1,4 @@
-## 🚀 Full-Stack Chat App Deployment Guide: Kubernetes (Kind) & Docker Compose:
+## 🚀 Full-Stack Chat App Deployment: Kubernetes (Kind) & Docker Compose:
 
 
 A simple project to provide a real-time chat experience that's both scalable and secure. This project is forked from [This Repo](https://github.com/iemafzalhassan/full-stack_chatApp), with the plan to integrate modern devops tools and deploy using Kubernetes.
@@ -9,7 +9,6 @@ A simple project to provide a real-time chat experience that's both scalable and
 
 
 ## ✨ Features:
-
 
 * **Real-time Messaging**: Send and receive messages instantly using Socket.io 
 * **User Authentication & Authorization**: Securely manage user access with JWT 
@@ -29,6 +28,15 @@ A simple project to provide a real-time chat experience that's both scalable and
 * **CI/CD:** Github Action
 * **Web Server:** Nginx
 * **Authentication:** JWT
+
+
+## 🔧 Prerequisites:
+
+* **[Kubernetes](https://kind.sigs.k8s.io/)** (I am using KIND here; other Kubernetes clusters can be used aswell)
+* **[Docker](https://www.docker.com/get-started)** (for containerizing the app)
+
+
+  
 
 ## 📚 Project Snapshots:
 
