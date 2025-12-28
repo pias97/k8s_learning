@@ -32,7 +32,7 @@ A simple project to provide a real-time chat experience that's both scalable and
 
 ## 📚 Project Snapshots:
 
-![chat](frontend/public/chat.png)
+![chat](three_tier_app_deployment/frontend/public/chat.png)
 
 ![logout](/frontend/public/logout.png)
 
