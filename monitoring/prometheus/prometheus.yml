@@ -8,7 +8,7 @@ alerting:
   alertmanagers:
     - static_configs:
         - targets:
-            - alertmanager:9093
+            - alertmanager:9099
 
 scrape_configs:
   - job_name: "prometheus"
@@ -21,4 +21,4 @@ scrape_configs:
 
   - job_name: "cadvisor"
     static_configs:
-      - targets: ["cadvisor:8888"]
+      - targets: ["cadvisor:8080"]
