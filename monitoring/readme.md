@@ -33,11 +33,11 @@ docker compose version
 
 ## 2️⃣ Directory Structure (IMPORTANT)
 
-Final directory structure should look like this below tree.
+The final directory structure should look like the tree below.
 ### Directory structure
 
 ```
-monitoring/ "whatever-you-like"
+monitoring/ "whatever-you-like".
 ├── docker-compose.yml
 ├── prometheus
 │   ├── prometheus.yml
@@ -110,7 +110,7 @@ Must show metrics.
 ```
 http://SERVER_IP:3000
 ```
-These are the initial login credential, change that accordingly.
+These are the initial login credentials; change that accordingly.
 * Username: `admin`
 * Password: `admin`
 
@@ -132,7 +132,7 @@ Import Grafana dashboard: ``Grafana → Dashboards → Import``
 * Data source: (Prometheus / Loki)
 
 
-#### These are basic dashboard added, more can be found here [Grafana Dashboards](https://grafana.com/grafana/dashboards/)
+#### These are basic dashboards added; more can be found here [Grafana Dashboards](https://grafana.com/grafana/dashboards/)
 
 
 ## ✅ Current Status
