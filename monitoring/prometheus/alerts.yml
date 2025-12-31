@@ -1,0 +1,30 @@
+groups:
+- name: server-alerts
+  rules:
+
+  - alert: HighCPUUsage
+    expr: 100 - (avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High CPU usage"
+      description: "CPU usage is above 80%"
+
+  - alert: HighMemoryUsage
+    expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High Memory usage"
+      description: "Memory usage above 85%"
+
+  - alert: DiskAlmostFull
+    expr: (node_filesystem_avail_bytes / node_filesystem_size_bytes) * 100 < 15
+    for: 10m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Disk almost full"
+      description: "Disk space less than 15%"
