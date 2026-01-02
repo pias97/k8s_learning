@@ -1,0 +1,181 @@
+name: CI/CD Pipeline for Online Shop
+
+on:
+  push:
+    branches:
+      - github-action
+
+jobs:
+  ###########################################################################
+  # Job 0: Detect Terraform code changes
+  ###########################################################################
+  detect-changes:
+    name: Detect Terraform Changes
+    runs-on: ubuntu-latest
+    outputs:
+      terraform_changed: ${{ steps.filter.outputs.terraform }}
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Filter paths
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            terraform:
+              - 'terraform/**'
+
+  ###########################################################################
+  # Job 1: Terraform Backend
+  ###########################################################################
+  terraform-backend:
+    name: Configure Terraform Backend
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.terraform_changed == 'true'
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
+
+      - name: Check if S3 Backend Bucket Exists
+        run: |
+          if aws s3 ls "s3://${{ secrets.AWS_S3_BUCKET }}" 2>&1 | grep -q 'NoSuchBucket'; then
+            echo "CREATE_BACKEND=true" >> $GITHUB_ENV
+          else
+            echo "CREATE_BACKEND=false" >> $GITHUB_ENV
+          fi
+
+      - name: Terraform Init (Backend)
+        run: terraform init
+        working-directory: terraform/terraform_backend
+
+      - name: Terraform Apply (Backend)
+        run: terraform apply -auto-approve -var="create_backend=$CREATE_BACKEND"
+        working-directory: terraform/terraform_backend
+
+  ###########################################################################
+  # Job 2: Terraform Resources
+  ###########################################################################
+  terraform-resources:
+    name: Provision Infrastructure
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.terraform_changed == 'true'
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
+
+      - name: Terraform Init
+        run: terraform init
+        working-directory: terraform/terraform_resources
+
+      - name: Terraform Plan
+        run: terraform plan
+        working-directory: terraform/terraform_resources
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve
+        working-directory: terraform/terraform_resources
+
+      - name: Get EC2 Public IP
+        id: get-ec2-ip
+        run: echo "ec2_ip=$(terraform output -raw instance_public_ip)" >> $GITHUB_OUTPUT
+        working-directory: terraform/terraform_resources
+
+  ###########################################################################
+  # Job 3: Build & Push Docker Image
+  ###########################################################################
+  docker:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Docker Login
+        run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
+      - name: Build Docker Image
+        run: docker build -t ${{ secrets.DOCKER_USERNAME }}/online_shop:latest .
+
+      - name: Push Docker Image
+        run: docker push ${{ secrets.DOCKER_USERNAME }}/online_shop:latest
+
+  ###########################################################################
+  # Job 4: Deploy to EC2
+  ###########################################################################
+  deploy:
+    name: Deploy on EC2
+    runs-on: ubuntu-latest
+    needs:
+      - docker
+      - terraform-resources
+    if: |
+      always() &&
+      (needs.terraform-resources.result == 'success' || needs.terraform-resources.result == 'skipped')
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ needs.terraform-resources.outputs.ec2_ip }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          script: |
+            sudo apt update -y
+            sudo apt install docker.io -y || true
+
+            sudo docker stop online_shop || true
+            sudo docker rm online_shop || true
+
+            sudo docker pull ${{ secrets.DOCKER_USERNAME }}/online_shop:latest
+            sudo docker run -d -p 3000:3000 --name online_shop \
+              ${{ secrets.DOCKER_USERNAME }}/online_shop:latest
+
+  ###########################################################################
+  # Job 5: Send Notification Email
+  ###########################################################################
+  notify:
+    name: Send Notification Email
+    runs-on: ubuntu-latest
+    needs: [docker, deploy]
+    if: always()
+    steps:
+      - name: Determine pipeline status
+        id: pipeline-status
+        run: |
+          if [[ "${{ needs.docker.result }}" == "success" ]] \
+          && [[ "${{ needs.deploy.result }}" == "success" ]]; then
+            echo "result=Success ✅" >> $GITHUB_OUTPUT
+          else
+            echo "result=Failed ❌" >> $GITHUB_OUTPUT
+
+      - name: Send Email
+        uses: hilarion5/send-mail@v1
+        with:
+          smtp-server: smtp.gmail.com
+          smtp-port: 465
+          smtp-secure: true
+          from-email: ${{ secrets.MAIL_FROM }}
+          to-email: amitabhdevops2024@gmail.com
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "CI/CD Pipeline Notification: ${{ github.workflow }} - ${{ steps.pipeline-status.outputs.result }}"
+          body: "Deployment finished. Check GitHub Actions for details."
