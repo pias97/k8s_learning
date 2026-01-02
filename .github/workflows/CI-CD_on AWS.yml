@@ -160,22 +160,23 @@ jobs:
             cd ${{ env.COMPOSE_DIR }}
 
             echo "📥 Pulling latest image..."
-            docker compose pull ${{ env.SERVICE_NAME }}
+            docker pull ${{ env.IMAGE_NAME }}:${{ github.run_number }}
 
             echo "💾 Backup docker-compose.yml"
-            cp ${{ env.DOCKER_COMPOSE_FILE }} ${{ env.DOCKER_COMPOSE_FILE }}.bak
+            cp ${{ env.COMPOSE_DIR }}/${{ env.DOCKER_COMPOSE_FILE }} ${{ env.COMPOSE_DIR }}/${{ env.DOCKER_COMPOSE_FILE }}.bak
 
             echo "🔄 Updating service image in docker-compose.yml"
             sed -i "/^  ${{ env.SERVICE_NAME }}:/,/image:/ s|image: .*|image: ${{ env.IMAGE_NAME }}:${{ github.run_number }}|" ${{ env.DOCKER_COMPOSE_FILE }}
 
             echo "✅ Validating docker-compose file"
-            docker compose config
+            docker compose -f ${{ env.COMPOSE_DIR }}/${{ env.DOCKER_COMPOSE_FILE }} config
 
-            echo "🚀 Deploying service..."
-            docker compose up -d --no-deps --build ${{ env.SERVICE_NAME }}
+            echo "🚀 Deploying ${{ env.SERVICE_NAME }}..."
+            docker compose -f ${{ env.DOCKER_COMPOSE_FILE }} up -d --no-deps --build ${{ env.SERVICE_NAME }}
+            echo "✅ Deployment finished."
 
             echo "🧹 Cleaning up backup"
-            rm -f ${{ env.DOCKER_COMPOSE_FILE }}.bak || true
+            rm -f ${{ env.COMPOSE_DIR }}/${{ env.DOCKER_COMPOSE_FILE }}.bak || true
 
   ###########################################################################
   # Job 5: Notify
