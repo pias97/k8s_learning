@@ -1,13 +1,21 @@
-name: CI/CD Pipeline for Online Shop
+name: CI+CD Compose AWS
 
 on:
   push:
-    branches:
-      - github-action
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  IMAGE_NAME: ${{ secrets.DOCKER_HUB_USERNAME }}/image_name
+  COMPOSE_DIR: /home/ubuntu/___
+  DOCKER_COMPOSE_FILE: docker-compose.yml
+  SERVICE_NAME: service_name_from_docker_compose
 
 jobs:
+
   ###########################################################################
-  # Job 0: Detect Terraform code changes
+  # Job 0: Detect Terraform changes (optional)
   ###########################################################################
   detect-changes:
     name: Detect Terraform Changes
@@ -16,9 +24,7 @@ jobs:
       terraform_changed: ${{ steps.filter.outputs.terraform }}
     steps:
       - uses: actions/checkout@v3
-
-      - name: Filter paths
-        uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@v3
         id: filter
         with:
           filters: |
@@ -26,7 +32,7 @@ jobs:
               - 'terraform/**'
 
   ###########################################################################
-  # Job 1: Terraform Backend
+  # Job 1: Terraform Backend (conditional)
   ###########################################################################
   terraform-backend:
     name: Configure Terraform Backend
@@ -35,35 +41,28 @@ jobs:
     if: needs.detect-changes.outputs.terraform_changed == 'true'
     steps:
       - uses: actions/checkout@v3
-
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
-
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: eu-west-1
-
-      - name: Check if S3 Backend Bucket Exists
+      - name: Check S3 Backend Bucket
         run: |
           if aws s3 ls "s3://${{ secrets.AWS_S3_BUCKET }}" 2>&1 | grep -q 'NoSuchBucket'; then
             echo "CREATE_BACKEND=true" >> $GITHUB_ENV
           else
             echo "CREATE_BACKEND=false" >> $GITHUB_ENV
-          fi
-
-      - name: Terraform Init (Backend)
-        run: terraform init
-        working-directory: terraform/terraform_backend
-
-      - name: Terraform Apply (Backend)
-        run: terraform apply -auto-approve -var="create_backend=$CREATE_BACKEND"
+      - name: Terraform Init & Apply
+        run: |
+          terraform init
+          terraform apply -auto-approve -var="create_backend=$CREATE_BACKEND"
         working-directory: terraform/terraform_backend
 
   ###########################################################################
-  # Job 2: Terraform Resources
+  # Job 2: Terraform Resources (conditional)
   ###########################################################################
   terraform-resources:
     name: Provision Infrastructure
@@ -72,110 +71,113 @@ jobs:
     if: needs.detect-changes.outputs.terraform_changed == 'true'
     steps:
       - uses: actions/checkout@v3
-
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
-
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: eu-west-1
-
-      - name: Terraform Init
-        run: terraform init
+      - name: Terraform Init & Apply
+        run: |
+          terraform init
+          terraform plan
+          terraform apply -auto-approve
         working-directory: terraform/terraform_resources
-
-      - name: Terraform Plan
-        run: terraform plan
-        working-directory: terraform/terraform_resources
-
-      - name: Terraform Apply
-        run: terraform apply -auto-approve
-        working-directory: terraform/terraform_resources
-
       - name: Get EC2 Public IP
         id: get-ec2-ip
         run: echo "ec2_ip=$(terraform output -raw instance_public_ip)" >> $GITHUB_OUTPUT
         working-directory: terraform/terraform_resources
 
   ###########################################################################
-  # Job 3: Build & Push Docker Image
+  # Job 3: Build and Push Docker Image
   ###########################################################################
-  docker:
+  build:
     name: Build & Push Docker Image
     runs-on: ubuntu-latest
     needs: detect-changes
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout Repo
+        uses: actions/checkout@v3
 
-      - name: Docker Login
-        run: echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+      - name: Docker Hub Login
+        uses: docker/login-action@v1
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
 
-      - name: Build Docker Image
-        run: docker build -t ${{ secrets.DOCKER_USERNAME }}/online_shop:latest .
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v1
 
-      - name: Push Docker Image
-        run: docker push ${{ secrets.DOCKER_USERNAME }}/online_shop:latest
+      - name: Build and Push
+        id: docker_build
+        uses: docker/build-push-action@v2
+        with:
+          context: ./
+          file: ./Dockerfile
+          push: true
+          tags: ${{ env.IMAGE_NAME }}:${{ github.run_number }}
+
+      - name: Image Digest
+        run: echo ${{ steps.docker_build.outputs.digest }}
 
   ###########################################################################
-  # Job 4: Deploy to EC2
+  # Job 4: Deploy Docker-Compose Service to EC2
   ###########################################################################
   deploy:
-    name: Deploy on EC2
+    name: Deploy Service via Compose on EC2
     runs-on: ubuntu-latest
     needs:
-      - docker
+      - build
       - terraform-resources
-    if: |
-      always() &&
-      (needs.terraform-resources.result == 'success' || needs.terraform-resources.result == 'skipped')
+    if: always()
     steps:
-      - name: Deploy via SSH
+      - name: SSH Deploy
         uses: appleboy/ssh-action@v0.1.10
         with:
           host: ${{ needs.terraform-resources.outputs.ec2_ip }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
           script: |
-            sudo apt update -y
-            sudo apt install docker.io -y || true
+            echo "🔍 Checking Docker installation..."
+            if ! command -v docker &> /dev/null; then
+              echo "🔧 Installing Docker..."
+              sudo apt update -y
+              sudo apt install docker.io -y
+            else
+              echo "Docker already installed"
+            fi
 
-            sudo docker stop online_shop || true
-            sudo docker rm online_shop || true
+            echo "🔍 Checking Docker Compose installation..."
+            if ! command -v docker-compose &> /dev/null; then
+              echo "🔧 Installing Docker Compose..."
+              sudo apt install docker-compose-plugin -y
+            else
+              echo "Docker Compose already installed"
+            fi
 
-            sudo docker pull ${{ secrets.DOCKER_USERNAME }}/online_shop:latest
-            sudo docker run -d -p 3000:3000 --name online_shop \
-              ${{ secrets.DOCKER_USERNAME }}/online_shop:latest
+            cd ${{ env.COMPOSE_DIR }}
+
+            echo "📥 Pulling latest image..."
+            docker compose pull ${{ env.SERVICE_NAME }}
+
+            echo "💾 Backup docker-compose.yml"
+            cp ${{ env.DOCKER_COMPOSE_FILE }} ${{ env.DOCKER_COMPOSE_FILE }}.bak
+
+            echo "🔄 Updating service image in docker-compose.yml"
+            sed -i "/^  ${{ env.SERVICE_NAME }}:/,/image:/ s|image: .*|image: ${{ env.IMAGE_NAME }}:${{ github.run_number }}|" ${{ env.DOCKER_COMPOSE_FILE }}
+
+            echo "✅ Validating docker-compose file"
+            docker compose config
+
+            echo "🚀 Deploying service..."
+            docker compose up -d --no-deps --build ${{ env.SERVICE_NAME }}
+
+            echo "🧹 Cleaning up backup"
+            rm -f ${{ env.DOCKER_COMPOSE_FILE }}.bak || true
 
   ###########################################################################
-  # Job 5: Send Notification Email
+  # Job 5: Notify
   ###########################################################################
-  notify:
-    name: Send Notification Email
-    runs-on: ubuntu-latest
-    needs: [docker, deploy]
-    if: always()
-    steps:
-      - name: Determine pipeline status
-        id: pipeline-status
-        run: |
-          if [[ "${{ needs.docker.result }}" == "success" ]] \
-          && [[ "${{ needs.deploy.result }}" == "success" ]]; then
-            echo "result=Success ✅" >> $GITHUB_OUTPUT
-          else
-            echo "result=Failed ❌" >> $GITHUB_OUTPUT
-
-      - name: Send Email
-        uses: hilarion5/send-mail@v1
-        with:
-          smtp-server: smtp.gmail.com
-          smtp-port: 465
-          smtp-secure: true
-          from-email: ${{ secrets.MAIL_FROM }}
-          to-email: amitabhdevops2024@gmail.com
-          username: ${{ secrets.MAIL_USERNAME }}
-          password: ${{ secrets.MAIL_PASSWORD }}
-          subject: "CI/CD Pipeline Notification: ${{ github.workflow }} - ${{ steps.pipeline-status.outputs.result }}"
-          body: "Deployment finished. Check GitHub Actions for details."
+  #will work on this later
